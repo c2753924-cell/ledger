@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<title>我的記帳本</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font:20px/1.4 system-ui,sans-serif;background:#fff;color:#111}
+#app{max-width:520px;margin:0 auto;padding:16px}
+h1,h2{margin:8px 0}
+.big{display:block;width:100%;text-align:left;border:3px solid #111;border-radius:20px;background:#fff;padding:24px;margin:16px 0;font:inherit;color:#111}
+.big b{font-size:28px;display:block}
+.big i{font-style:normal;font-size:40px;font-weight:800;display:block;margin:6px 0}
+.big span{color:#444}
+.bar{display:flex;justify-content:space-between;align-items:center;margin:8px 0 14px;gap:10px}
+button{font:inherit;cursor:pointer}
+.btn{background:#111;color:#fff;border:2px solid #111;border-radius:14px;padding:12px 18px}
+.btn.o{background:#fff;color:#111}
+.btn.r{background:#fff;color:#c00;border-color:#c00}
+.card{background:#f2f2f2;border-radius:18px;padding:18px;margin:12px 0}
+.left{font-size:44px;font-weight:800}
+.neg{color:#c00}
+small{color:#555;font-size:15px}
+.row{display:flex;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid #ddd}
+.row small{display:block}
+#sheet{position:fixed;inset:0;background:#fff;overflow:auto;padding:16px;display:none}
+#sheet>div.in{max-width:520px;margin:0 auto}
+label{display:block;margin:14px 0 4px;font-weight:600}
+input,select{width:100%;font:inherit;padding:12px;border:2px solid #111;border-radius:12px;background:#fff;color:#111}
+input[type=checkbox]{width:auto;transform:scale(1.5);margin-right:14px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.chip{background:#eee;border:0;border-radius:20px;padding:8px 14px;color:#111}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="sheet"></div>
+<input type="file" id="imp" accept=".json,application/json" hidden>
+<script>
+const BUDGET=3000, KEY='ledger_v1';
+const CUR=['USD','JPY','KRW','EUR','CNY','HKD','GBP','THB','SGD','AUD','CAD','VND','MYR'];
+const $=id=>document.getElementById(id);
+const pad=n=>String(n).padStart(2,'0');
+const today=()=>{const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())};
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=n=>(n<0?'-':'')+'NT$'+Math.abs(Math.round(n)).toLocaleString('en-US');
+const sum=l=>l.reduce((t,x)=>t+x.amount,0);
+
+let db=load(), view='home', month=today().slice(0,7), form=null;
+function load(){try{const d=JSON.parse(localStorage.getItem(KEY));if(d&&d.daily&&d.shop)return d}catch(e){}return{daily:[],shop:[]}}
+function save(){localStorage.setItem(KEY,JSON.stringify(db))}
+
+function go(v){view=v;render();scrollTo(0,0)}
+function shift(k){let y=+month.slice(0,4),m=+month.slice(5)+k;while(m>12){m-=12;y++}while(m<1){m+=12;y--}month=y+'-'+pad(m);render()}
+const monthLabel=()=>month.slice(0,4)+'年'+(+month.slice(5))+'月';
+const nav=()=>`<div class="bar"><button class="btn o" onclick="shift(-1)">‹</button><b>${monthLabel()}</b><button class="btn o" onclick="shift(1)">›</button></div>`;
+
+function dailyStats(m){
+  const ms=db.daily.map(x=>x.date.slice(0,7));
+  const start=ms.length?ms.reduce((a,b)=>a<b?a:b):m;
+  const s=start<m?start:m;
+  const n=(+m.slice(0,4)-+s.slice(0,4))*12+(+m.slice(5)-+s.slice(5))+1;
+  const before=sum(db.daily.filter(x=>x.date.slice(0,7)<m));
+  const spent=sum(db.daily.filter(x=>x.date.slice(0,7)===m));
+  const carry=BUDGET*(n-1)-before;
+  return{carry,spent,left:carry+BUDGET-spent};
+}
+
+function render(){
+  const a=$('app');
+  if(view==='home'){
+    a.innerHTML=`<h1>我的記帳本</h1>
+    <button class="big" onclick="go('daily')"><b>日常預算記帳</b><i>NT$3,000</i><span>每月基本預算，餘額自動結轉</span></button>
+    <button class="big" onclick="go('shop')"><b>購物紀錄</b><i>不限金額</i><span>美容用品、衣服及所有購物，獨立記錄</span></button>
+    <div class="card"><b>資料備份</b><div style="display:flex;gap:10px;margin-top:10px">
+    <button class="btn" onclick="exportData()">匯出備份</button>
+    <button class="btn o" onclick="$('imp').click()">還原備份</button></div></div>`;
+  } else if(view==='daily'){
+    const s=dailyStats(month);
+    const items=db.daily.filter(x=>x.date.startsWith(month)).sort((p,q)=>q.date.localeCompare(p.date)||q.id.localeCompare(p.id));
+    a.innerHTML=`<div class="bar"><button class="btn o" onclick="go('home')">← 返回</button><button class="btn" onclick="openForm('daily')">＋ 記一筆</button></div>${nav()}
+    <div class="card">本月可用<div class="left ${s.left<0?'neg':''}">${fmt(s.left)}</div>
+    <small>上月結轉 ${fmt(s.carry)} ＋ 本月預算 ${fmt(BUDGET)} − 本月已花 ${fmt(s.spent)}</small></div>
+    ${items.map(x=>`<div class="row" onclick="openForm('daily','${x.id}')"><div>${esc(x.name)}<small>${x.date}${x.fx?' · '+x.fx.famt+' '+x.fx.cur:''}${x.ok?'':' · 估算'}</small></div><b>${fmt(x.amount)}</b></div>`).join('')||'<p>這個月還沒有紀錄</p>'}`;
+  } else {
+    const items=db.shop.filter(x=>x.date.startsWith(month)).sort((p,q)=>q.date.localeCompare(p.date)||q.id.localeCompare(p.id));
+    a.innerHTML=`<div class="bar"><button class="btn o" onclick="go('home')">← 返回</button><button class="btn" onclick="openForm('shop')">＋ 記一筆</button></div>${nav()}
+    <div class="card">本月購物<div class="left">${fmt(sum(items))}</div><small>累計 ${fmt(sum(db.shop))}（無預算限制）</small></div>
+    ${items.map(x=>`<div class="row" onclick="openForm('shop','${x.id}')"><div>${esc(x.name)}<small>${x.date}</small></div><b>${fmt(x.amount)}</b></div>`).join('')||'<p>這個月還沒有紀錄</p>'}`;
+  }
+}
+
+function openForm(kind,id){
+  form={kind,id:id||null};
+  const x=id?db[kind].find(r=>r.id===id):null;
+  const fx=x&&x.fx;
+  const all=[...new Set(db[kind].map(r=>r.name))];
+  const recent=[...new Set(db[kind].slice().sort((p,q)=>q.date.localeCompare(p.date)).map(r=>r.name))].slice(0,8);
+  let h=`<div class="in"><div class="bar"><h2>${id?'編輯':'新增'}${kind==='daily'?'日常消費':'購物'}</h2><button class="btn o" onclick="closeForm()">取消</button></div>
+  <datalist id="names">${all.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+  <label>日期</label><input id="f-date" type="date" value="${x?x.date:today()}">
+  <label>名稱</label><input id="f-name" list="names" autocomplete="off" placeholder="自由輸入，或點下方舊名稱" value="${x?esc(x.name):''}">
+  <div class="chips">${recent.map(n=>`<button class="chip" onclick="$('f-name').value=this.textContent">${esc(n)}</button>`).join('')}</div>`;
+  if(kind==='daily'){
+    h+=`<label style="display:flex;align-items:center;margin:20px 0 8px"><input type="checkbox" id="f-fx" ${fx?'checked':''} onchange="fxChange('tog')">外幣消費</label>
+    <div id="fx-box" style="display:${fx?'block':'none'}">
+    <label>幣別</label><select id="f-cur" onchange="fxChange('cur')">${CUR.map(c=>`<option ${fx&&fx.cur===c?'selected':''}>${c}</option>`).join('')}</select>
+    <label>外幣金額</label><input id="f-famt" type="number" inputmode="decimal" value="${fx?fx.famt:''}" oninput="fxChange('amt')">
+    <label>匯率（自動查詢，可修改）</label><input id="f-rate" type="number" inputmode="decimal" value="${fx?fx.rate:''}" oninput="recalc()">
+    <small id="rate-msg"></small>
+    <label>手續費（台幣，選填）</label><input id="f-fee" type="number" inputmode="decimal" value="${fx&&fx.fee?fx.fee:''}" oninput="recalc()">
+    </div>`;
+  }
+  h+=`<label>台幣金額</label><input id="f-amt" type="number" inputmode="numeric" value="${x?x.amount:''}">`;
+  if(kind==='daily'){
+    h+=`<div id="ok-box" style="display:${fx?'block':'none'}"><label style="display:flex;align-items:center;margin-top:16px"><input type="checkbox" id="f-ok" ${x&&x.fx&&x.ok?'checked':''}>已依信用卡帳單確認實際金額</label></div>`;
+  }
+  h+=`<div style="display:flex;gap:10px;margin:24px 0 60px"><button class="btn" style="flex:1" onclick="saveForm()">儲存</button>${id?'<button class="btn r" onclick="delRec()">刪除</button>':''}</div></div>`;
+  $('sheet').innerHTML=h;$('sheet').style.display='block';$('sheet').scrollTop=0;
+}
+function closeForm(){$('sheet').style.display='none';form=null}
+
+function fxChange(src){
+  const on=$('f-fx').checked;
+  $('fx-box').style.display=on?'block':'none';
+  $('ok-box').style.display=on?'block':'none';
+  if(!on)return;
+  if(src==='cur'||!$('f-rate').value)fetchRate();else recalc();
+}
+async function getRate(cur){
+  try{const r=await fetch('https://open.er-api.com/v6/latest/'+cur);const j=await r.json();if(j.rates&&j.rates.TWD)return j.rates.TWD}catch(e){}
+  try{const c=cur.toLowerCase();const r=await fetch('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/'+c+'.json');const j=await r.json();if(j[c]&&j[c].twd)return j[c].twd}catch(e){}
+  return null;
+}
+async function fetchRate(){
+  const cur=$('f-cur').value;$('rate-msg').textContent='查詢匯率中…';
+  const r=await getRate(cur);
+  if(r){$('f-rate').value=+r.toFixed(4);$('rate-msg').textContent='已自動查詢匯率';recalc()}
+  else $('rate-msg').textContent='查不到匯率（可能沒網路），請手動輸入匯率或台幣金額';
+}
+function recalc(){
+  const fa=+$('f-famt').value,r=+$('f-rate').value,fee=+$('f-fee').value||0;
+  if(fa>0&&r>0)$('f-amt').value=Math.round(fa*r+fee);
+}
+
+function saveForm(){
+  const k=form.kind,list=db[k];
+  const name=$('f-name').value.trim(),amount=Math.round(+$('f-amt').value),date=$('f-date').value;
+  if(!name||!(amount>0)||!date){alert('請填寫日期、名稱與金額');return}
+  const rec={id:form.id||Date.now().toString(36),date,name,amount};
+  if(k==='daily'){
+    if($('f-fx').checked){
+      rec.fx={cur:$('f-cur').value,famt:+$('f-famt').value,rate:+$('f-rate').value,fee:+$('f-fee').value||0};
+      rec.ok=$('f-ok').checked;
+    }else{rec.fx=null;rec.ok=true}
+  }
+  const i=list.findIndex(x=>x.id===form.id);
+  if(i>=0)list[i]=rec;else list.push(rec);
+  save();month=date.slice(0,7);closeForm();render();
+}
+function delRec(){
+  if(!confirm('確定刪除這筆紀錄？'))return;
+  db[form.kind]=db[form.kind].filter(x=>x.id!==form.id);
+  save();closeForm();render();
+}
+
+function exportData(){
+  const b=new Blob([JSON.stringify(db)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(b);
+  a.download='ledger-backup-'+today()+'.json';a.click();
+}
+$('imp').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const d=JSON.parse(r.result);
+      if(!Array.isArray(d.daily)||!Array.isArray(d.shop))throw 0;
+      if(!confirm('還原會取代目前所有資料，確定嗎？'))return;
+      db=d;save();render();alert('還原完成');
+    }catch(x){alert('檔案格式不正確')}
+  };
+  r.readAsText(f);e.target.value='';
+};
+
+if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+render();
+</script>
+</body>
+</html>
